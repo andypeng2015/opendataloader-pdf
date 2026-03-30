@@ -164,9 +164,7 @@ public class AutoTaggingProcessor {
     public static void createStructureTreeElements(List<List<IObject>> contents, COSObject structTreeRoot, COSDocument cosDocument) {
         COSObject seDocument = addStructElement(structTreeRoot, cosDocument, TaggedPDFConstants.DOCUMENT, null);
         for (List<IObject> pageContents : contents) {
-            for (IObject content : pageContents) {
-                createStructElem(content, seDocument, cosDocument);
-            }
+            ensureCaptionOrder(pageContents, seDocument, cosDocument);
         }
     }
 
@@ -248,9 +246,7 @@ public class AutoTaggingProcessor {
                     listItem.getFirstLine().getValue().length()));
             }
             processTextNode(lBodyTextNode, lBodyObject);
-            for (IObject content : listItem.getContents()) {
-                createStructElem(content, lBodyObject, cosDocument);
-            }
+            ensureCaptionOrder(listItem.getContents(), lBodyObject, cosDocument);
         }
     }
 
@@ -269,9 +265,7 @@ public class AutoTaggingProcessor {
                     if (cell.getRowSpan() != 1) {
                         addAttributeToStructElem(cellObject, ASAtom.TABLE, ASAtom.ROW_SPAN, COSInteger.construct(cell.getRowSpan()));
                     }
-                    for (IObject cellContent : cell.getContents()) {
-                        createStructElem(cellContent, cellObject, cosDocument);
-                    }
+                    ensureCaptionOrder(cell.getContents(), cellObject, cosDocument);
                 }
             }
         }
@@ -280,9 +274,7 @@ public class AutoTaggingProcessor {
     private static void createPartStructElemForTextBlock(TableBorder table, COSObject parent, COSDocument cosDocument) {
         COSObject partObject = addStructElement(parent, cosDocument, TaggedPDFConstants.PART, table.getPageNumber());
         TableBorderCell cell = table.getCell(0,0);
-        for (IObject cellContent : cell.getContents()) {
-            createStructElem(cellContent, partObject, cosDocument);
-        }
+        ensureCaptionOrder(cell.getContents(), partObject, cosDocument);
     }
 
     private static void addAttributeToStructElem(COSObject structElement, ASAtom ownerASAtom, ASAtom attributeName,
@@ -401,5 +393,25 @@ public class AutoTaggingProcessor {
 
     public static Map<OperatorStreamKey, Map<Integer, Set<StreamInfo>>> getOperatorIndexesToStreamInfosMap() {
         return operatorIndexesToStreamInfosMap;
+    }
+
+    private static void ensureCaptionOrder(List<IObject> contents, COSObject parentStructElem, COSDocument cosDocument) {
+        List<IObject> reordered = new ArrayList<>(contents);
+        int captionIndex = -1;
+        for (int i = 0; i < contents.size(); i++) {
+            if (contents.get(i) instanceof SemanticCaption) {
+                captionIndex = i;
+                break;
+            }
+        }
+
+        if (captionIndex != -1 && captionIndex != 0) {
+            SemanticCaption caption = (SemanticCaption) reordered.remove(captionIndex);
+            reordered.add(caption);
+        }
+
+        for (IObject child : reordered) {
+            createStructElem(child, parentStructElem, cosDocument);
+        }
     }
 }
