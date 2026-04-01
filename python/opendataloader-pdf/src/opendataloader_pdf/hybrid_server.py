@@ -216,15 +216,13 @@ def _check_dependencies():
         )
 
 
-DEFAULT_PICTURE_DESCRIPTION_PROMPT = "Describe what you see in this image. Include any text, numbers, labels, and data values visible."
-
-
 def create_converter(
     force_full_page_ocr: bool = False,
     ocr_lang: list[str] | None = None,
     enrich_formula: bool = False,
     enrich_picture_description: bool = False,
     picture_description_prompt: str | None = None,
+    device: str = "auto",
 ):
     """Create a DocumentConverter with the specified options.
 
@@ -236,9 +234,11 @@ def create_converter(
         enrich_formula: If True, enable formula enrichment (LaTeX extraction).
         enrich_picture_description: If True, enable picture description (alt text generation).
         picture_description_prompt: Custom prompt for picture description. If None, uses default.
+        device: Accelerator device: "auto" (default), "cpu", "cuda", "mps", "xpu".
     """
     from docling.datamodel.base_models import InputFormat
     from docling.datamodel.pipeline_options import (
+        AcceleratorOptions,
         EasyOcrOptions,
         PdfPipelineOptions,
         PictureDescriptionVlmOptions,
@@ -254,11 +254,8 @@ def create_converter(
     # Configure picture description options with custom prompt
     picture_description_options = None
     if enrich_picture_description:
-        prompt = picture_description_prompt or DEFAULT_PICTURE_DESCRIPTION_PROMPT
         picture_description_options = PictureDescriptionVlmOptions(
             repo_id="HuggingFaceTB/SmolVLM-256M-Instruct",
-            prompt=prompt,
-            generation_config={"max_new_tokens": 300, "do_sample": False},
         )
 
     pipeline_kwargs = {
@@ -272,6 +269,9 @@ def create_converter(
     }
     if picture_description_options is not None:
         pipeline_kwargs["picture_description_options"] = picture_description_options
+
+    if device != "auto":
+        pipeline_kwargs["accelerator_options"] = AcceleratorOptions(device=device)
 
     pipeline_options = PdfPipelineOptions(**pipeline_kwargs)
 
@@ -289,6 +289,7 @@ def create_app(
     enrich_picture_description: bool = False,
     picture_description_prompt: str | None = None,
     max_file_size: int = MAX_FILE_SIZE,
+    device: str = "auto",
 ):
     """Create and configure the FastAPI application.
 
@@ -299,6 +300,7 @@ def create_app(
         enrich_picture_description: If True, enable picture description (alt text generation).
         picture_description_prompt: Custom prompt for picture description.
         max_file_size: Maximum file size in bytes. 0 means no limit (default).
+        device: Accelerator device: "auto" (default), "cpu", "cuda", "mps", "xpu".
     """
     from fastapi import FastAPI, File, Form, UploadFile
     from fastapi.responses import JSONResponse
@@ -326,6 +328,7 @@ def create_app(
             enrich_formula=enrich_formula,
             enrich_picture_description=enrich_picture_description,
             picture_description_prompt=picture_description_prompt,
+            device=device,
         )
 
         elapsed = time.perf_counter() - start
@@ -531,6 +534,13 @@ def main():
         default=MAX_FILE_SIZE,
         help="Maximum upload file size in MB. 0 means no limit (default: 0).",
     )
+    parser.add_argument(
+        "--device",
+        type=str,
+        default="auto",
+        choices=["auto", "cpu", "cuda", "mps", "xpu"],
+        help="Accelerator device to use (default: auto)",
+    )
     args = parser.parse_args()
 
     # Parse ocr_lang
@@ -545,17 +555,20 @@ def main():
     if args.enrich_picture_description:
         enrichments.append("picture-description")
 
-    # Log GPU/CPU detection
+    # Log accelerator detection
     try:
         import torch
         if torch.cuda.is_available():
             gpu_name = torch.cuda.get_device_name(0)
             cuda_version = torch.version.cuda
             logger.info(f"GPU detected: {gpu_name} (CUDA {cuda_version})")
+        elif torch.backends.mps.is_available():
+            logger.info("Apple Silicon GPU detected (MPS)")
         else:
             logger.info("No GPU detected, using CPU.")
     except ImportError:
         logger.info("No GPU detected, using CPU. (PyTorch not installed)")
+    logger.info(f"Device: {args.device}")
 
     # Convert MB to bytes (0 stays 0 = unlimited)
     max_file_size_bytes = args.max_file_size * 1024 * 1024 if args.max_file_size > 0 else 0
@@ -576,6 +589,7 @@ def main():
         enrich_picture_description=args.enrich_picture_description,
         picture_description_prompt=args.picture_description_prompt,
         max_file_size=max_file_size_bytes,
+        device=args.device,
     )
     uvicorn.run(
         app,
